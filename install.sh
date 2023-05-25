@@ -7,12 +7,10 @@ abort() {
   exit 1
 }
 
-# Fail fast with a concise message when not using bash
-# Single brackets are needed here for POSIX compatibility
-# shellcheck disable=SC2292
+# Check for bash
 if [ -z "${BASH_VERSION:-}" ]
 then
-  abort "Bash is required to interpret this script."
+  abort "You need use bash to run this script!"
 fi
 
 # Check if script is run with force-interactive mode in CI
@@ -22,11 +20,9 @@ then
 fi
 
 # Check if both `INTERACTIVE` and `NONINTERACTIVE` are set
-# Always use single-quoted strings with `exp` expressions
-# shellcheck disable=SC2016
 if [[ -n "${INTERACTIVE-}" && -n "${NONINTERACTIVE-}" ]]
 then
-  abort 'Both `$INTERACTIVE` and `$NONINTERACTIVE` are set. Please unset at least one variable and try again.'
+  abort 'Both `$INTERACTIVE` and `$NONINTERACTIVE` are set. Unset at least one variable and try again.'
 fi
 
 # Check if script is run in POSIX mode
@@ -73,9 +69,6 @@ warn() {
 }
 
 # Check if script is run non-interactively (e.g. CI)
-# If it is run non-interactively we should not prompt for passwords.
-# Always use single-quoted strings with `exp` expressions
-# shellcheck disable=SC2016
 if [[ -z "${NONINTERACTIVE-}" ]]
 then
   if [[ -n "${CI-}" ]]
@@ -126,7 +119,6 @@ then
     CRAFT_PREFIX="/usr/local"
     CRAFT_REPOSITORY="${CRAFT_PREFIX}/craft"
   fi
-  CRAFT_CACHE="${HOME}/Library/Caches/craft"
 
   STAT_PRINTF=("stat" "-f")
   PERMISSION_FORMAT="%A"
@@ -149,12 +141,10 @@ then
 fi
 export STEIN935_CRAFT_GIT_REMOTE
 
-# TODO: bump version when new macOS is released or announced
 MACOS_NEWEST_UNSUPPORTED="14.0"
-# TODO: bump version when new macOS is released
 MACOS_OLDEST_SUPPORTED="11.0"
 
-REQUIRED_GIT_VERSION=2.7.0   # CRAFT_MINIMUM_GIT_VERSION in craft.sh in craft/craft
+REQUIRED_GIT_VERSION=2.7.0   
 REQUIRED_JAVA_VERSION=17.0.0
 
 unset HAVE_SUDO_ACCESS # unset this from the environment
@@ -286,10 +276,6 @@ get_permission() {
   "${STAT_PRINTF[@]}" "${PERMISSION_FORMAT}" "$1"
 }
 
-user_only_chmod() {
-  [[ -d "$1" ]] && [[ "$(get_permission "$1")" != 75[0145] ]]
-}
-
 exists_but_not_writable() {
   [[ -e "$1" ]] && ! [[ -r "$1" && -w "$1" && -x "$1" ]]
 }
@@ -349,8 +335,6 @@ which() {
 }
 
 # Search PATH for the specified program that satisfies Craft requirements
-# function which is set above
-# shellcheck disable=SC2230
 find_tool() {
   if [[ $# -ne 1 ]]
   then
@@ -389,16 +373,6 @@ ohai 'Checking for `sudo` access (which may request your password)...'
 if [[ -n "${CRAFT_ON_MACOS-}" ]]
 then
   have_sudo_access
-elif ! [[ -w "${CRAFT_PREFIX}" ]] &&
-     ! [[ -w "/home/linuxbrew" ]] &&
-     ! [[ -w "/home" ]] &&
-     ! have_sudo_access
-then
-  abort "$(
-    cat <<EOABORT
-Insufficient permissions to install Craft to \"${CRAFT_PREFIX}\" (the default prefix).
-EOABORT
-  )"
 fi
 
 check_run_command_as_root
@@ -615,32 +589,6 @@ then
 fi
 execute_sudo "${CHOWN[@]}" "-R" "${USER}:${GROUP}" "${CRAFT_REPOSITORY}"
 
-if ! [[ -d "${CRAFT_CACHE}" ]]
-then
-  if [[ -n "${CRAFT_ON_MACOS-}" ]]
-  then
-    execute_sudo "${MKDIR[@]}" "${CRAFT_CACHE}"
-  else
-    execute "${MKDIR[@]}" "${CRAFT_CACHE}"
-  fi
-fi
-if exists_but_not_writable "${CRAFT_CACHE}"
-then
-  execute_sudo "${CHMOD[@]}" "g+rwx" "${CRAFT_CACHE}"
-fi
-if file_not_owned "${CRAFT_CACHE}"
-then
-  execute_sudo "${CHOWN[@]}" "-R" "${USER}" "${CRAFT_CACHE}"
-fi
-if file_not_grpowned "${CRAFT_CACHE}"
-then
-  execute_sudo "${CHGRP[@]}" "-R" "${GROUP}" "${CRAFT_CACHE}"
-fi
-if [[ -d "${CRAFT_CACHE}" ]]
-then
-  execute "${TOUCH[@]}" "${CRAFT_CACHE}/.cleaned"
-fi
-
 if should_install_command_line_tools && version_ge "${macos_version}" "10.13"
 then
   ohai "Searching online for the Command Line Tools"
@@ -740,8 +688,7 @@ ohai "Downloading and installing Craft..."
     fi
   fi
 
-
-  # execute "${CRAFT_PREFIX}/bin/craft" "update" "--force" "--quiet"
+  execute "${CRAFT_PREFIX}/bin/craft" "update" "--force" "--quiet"
 ) || exit 1
 
 if [[ ":${PATH}:" != *":${CRAFT_PREFIX}/bin:"* ]]
