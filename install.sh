@@ -688,7 +688,7 @@ ohai "Downloading and installing Craft..."
     fi
   fi
 
-  execute "${CRAFT_PREFIX}/bin/craft" "update" "--force" "--quiet"
+  # execute "${CRAFT_PREFIX}/bin/craft" "update" "--force" "--quiet"
 ) || exit 1
 
 if [[ ":${PATH}:" != *":${CRAFT_PREFIX}/bin:"* ]]
