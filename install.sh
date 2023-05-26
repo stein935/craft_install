@@ -752,6 +752,6 @@ then
 fi
 
 cat <<EOS
-- Run ${tty_bold}craft help${tty_reset} to get started
+- Run ${tty_bold}craft -h${tty_reset} to get started
 
 EOS
