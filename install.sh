@@ -43,7 +43,7 @@ $1 && echo "Repo URL: $REPO_URL" && echo "CLI Script Name: $CLI_SCRIPT_NAME" && 
 
 # Check macOS version
 MACOS_VERSION=$(sw_vers -productVersion)
-REQUIRED_MACOS_VERSION="15.5"
+REQUIRED_MACOS_VERSION="12.7"
 if [[ "$(printf '%s\n' "$REQUIRED_MACOS_VERSION" "$MACOS_VERSION" | sort -V | head -n1)" != "$REQUIRED_MACOS_VERSION" ]]; then
 	echo "Error: macOS version must be >= $REQUIRED_MACOS_VERSION. Current version: $MACOS_VERSION"
 	exit 1
