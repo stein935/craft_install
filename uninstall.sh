@@ -1,201 +1,133 @@
 #!/bin/bash
 
-uninstall=false
-delete_servers=false
-servers=()
+declare -a servers
+declare SERVER_DIR="/opt/craft/servers"
+declare BIN_DIR="/opt/craft/bin"
 
-# string formatters
-if [[ -t 1 ]]
-then
-  tty_escape() { printf "\033[%sm" "$1"; }
+abort() {
+	printf "%s\n" "$@" >&2
+	exit 1
+}
+
+# Check for bash
+if [ -z "${BASH_VERSION:-}" ]; then
+	abort "You need use bash to run this script!"
+fi
+
+# Check if script is run with force-interactive mode in CI
+if [[ -n "${CI-}" && -n "${INTERACTIVE-}" ]]; then
+	abort "Cannot run force-interactive mode in CI."
+fi
+
+# Check if both `INTERACTIVE` and `NONINTERACTIVE` are set
+if [[ -n "${INTERACTIVE-}" && -n "${NONINTERACTIVE-}" ]]; then
+	#  shellcheck disable=SC2016
+	abort 'Both `$INTERACTIVE` and `$NONINTERACTIVE` are set. Unset at least one variable and try again.'
+fi
+
+# Check if script is run in POSIX mode
+if [[ -n "${POSIXLY_CORRECT+1}" ]]; then
+	abort 'Bash must not run in POSIX mode. Please unset POSIXLY_CORRECT and try again.'
+fi
+
+# --- System Checks ---
+
+# Check macOS version
+MACOS_VERSION=$(sw_vers -productVersion)
+REQUIRED_MACOS_VERSION="15.5"
+if [[ "$(printf '%s\n' "$REQUIRED_MACOS_VERSION" "$MACOS_VERSION" | sort -V | head -n1)" != "$REQUIRED_MACOS_VERSION" ]]; then
+	echo "Error: macOS version must be >= $REQUIRED_MACOS_VERSION. Current version: $MACOS_VERSION"
+fi
+
+# Check for sudo availability and privileges
+if ! command -v sudo &>/dev/null; then
+	abort "Error: 'sudo' command is not available. Please install sudo and ensure you have admin privileges."
+fi
+
+# --- Uninstall ---
+
+if [ -z "$(ls -A "$SERVER_DIR")" ]; then
+	echo "No servers found in $SERVER_DIR"
 else
-  tty_escape() { :; }
+	while true; do
+
+		if craft -v &>/dev/null; then
+			echo "Stopping all servers"
+			while IFS= read -r server; do
+				servers+=("$server")
+			done < <(craft -ls)
+
+			for server in "${servers[@]}"; do
+				sudo craft stop -n "$server" &>/dev/null
+				sudo launchctl remove "craft.$server.daemon" &>/dev/null
+				sudo rm -f "/Library/LaunchDaemons/craft.$server.daemon.plist" &>/dev/null
+				launchctl list | grep -q "craft\.$server\.daemon" || [ -f "/Library/LaunchDaemons/craft.$server.daemon.plist" ] &&
+					abort "Failed to stop $server. Please stop it manually using:\n\n  sudo craft stop -n \"$server\""
+			done
+		fi
+
+		read -p "Delete all servers in $SERVER_DIR? (y/n) : " -n 1 -r
+		echo
+		if [[ $REPLY =~ ^[Yy]$ ]]; then
+			break
+		elif [[ $REPLY =~ ^[Nn]$ ]]; then
+			echo "Copying servers to ${HOME}/Craft"
+			mkdir -p "${HOME}/Craft" &>/dev/null
+			sudo cp -R "$SERVER_DIR"/* "${HOME}/Craft" &&
+				[ -d "$HOME/Craft" ] &&
+				[ -n "$(ls -A "$HOME/Craft")" ] ||
+				abort "Failed to copy servers to ${HOME}/Craft"
+			break
+		else
+			echo "Please enter y or n"
+		fi
+
+	done
 fi
-tty_mkbold() { tty_escape "1;$1"; }
-tty_underline="$(tty_escape "4;39")"
-tty_blue="$(tty_mkbold 34)"
-tty_red="$(tty_mkbold 31)"
-tty_bold="$(tty_mkbold 39)"
-tty_reset="$(tty_escape 0)"
-
-shell_join() {
-  local arg
-  printf "%s" "$1"
-  shift
-  for arg in "$@"
-  do
-    printf " "
-    printf "%s" "${arg// /\ }"
-  done
-}
-
-chomp() {
-  printf "%s" "${1/"$'\n'"/}"
-}
-
-ohai() {
-  printf "${tty_blue}==>${tty_bold} %s${tty_reset}\n" "$(shell_join "$@")"
-}
-
-warn() {
-  printf "${tty_red}Warning${tty_reset}: %s\n" "$(chomp "$1")" >&2
-}
-
-have_sudo_access() {
-  if [[ ! -x "/usr/bin/sudo" ]]
-  then
-    return 1
-  fi
-
-  local -a SUDO=("/usr/bin/sudo")
-  if [[ -n "${SUDO_ASKPASS-}" ]]
-  then
-    SUDO+=("-A")
-  elif [[ -n "${NONINTERACTIVE-}" ]]
-  then
-    SUDO+=("-n")
-  fi
-
-  if [[ -z "${HAVE_SUDO_ACCESS-}" ]]
-  then
-    if [[ -n "${NONINTERACTIVE-}" ]]
-    then
-      "${SUDO[@]}" -l mkdir &>/dev/null
-    else
-      "${SUDO[@]}" -v && "${SUDO[@]}" -l mkdir &>/dev/null
-    fi
-    HAVE_SUDO_ACCESS="$?"
-  fi
-
-  if [[ -n "${CRAFT_ON_MACOS-}" ]] && [[ "${HAVE_SUDO_ACCESS}" -ne 0 ]]
-  then
-    abort "Need sudo access on macOS (e.g. the user ${USER} needs to be an Administrator)!"
-  fi
-
-  return "${HAVE_SUDO_ACCESS}"
-}
-
-execute() {
-  if ! "$@"
-  then
-    abort "$(printf "Failed during: %s" "$(shell_join "$@")")"
-  fi
-}
-
-execute_sudo() {
-  local -a args=("$@")
-  if have_sudo_access
-  then
-    if [[ -n "${SUDO_ASKPASS-}" ]]
-    then
-      args=("-A" "${args[@]}")
-    fi
-    ohai "/usr/bin/sudo" "${args[@]}"
-    execute "/usr/bin/sudo" "${args[@]}"
-  else
-    ohai "${args[@]}"
-    execute "${args[@]}"
-  fi
-}
-
-ohai 'Checking for `sudo` access (which may request your password)...'
-
-have_sudo_access
 
 while true; do
 
-  warn "Uninstall Craft CLI?"
-  read -p "(y/n) : " -n 1 -r
-  echo
-  if [[ $REPLY =~ ^[Yy]$ ]]; then
+	read -p "Are you sure you want to uninstall Craft? (y/n) : " -n 1 -r
+	echo
 
-    uninstall=true
-
-    break
-
-  elif [[ $REPLY =~ ^[Nn]$ ]]; then
-
-    warn "Cancelling uninstall" 
-
-    exit 0
-
-  else
-
-    echo "Please enter y or n"
-
-  fi
+	if [[ $REPLY =~ ^[Yy]$ ]]; then
+		echo "Uninstalling Craft CLI"
+		sudo rm -rf "/opt/craft" &&
+			! [ -d "/opt/craft" ] ||
+			abort "Failed to remove /opt/craft"
+		break
+	elif [[ $REPLY =~ ^[Nn]$ ]]; then
+		echo "Cancelling uninstall"
+		exit 0
+	else
+		echo "Please enter y or n"
+	fi
 
 done
 
-while true; do
+case "${SHELL}" in
+*/bash*)
+	if [[ -r "${HOME}/.bash_profile" ]]; then
+		shell_profile="${HOME}/.bash_profile"
+	else
+		shell_profile="${HOME}/.profile"
+	fi
+	;;
+*/zsh*)
+	shell_profile="${HOME}/.zprofile"
+	;;
+*)
+	shell_profile="${HOME}/.profile"
+	;;
+esac
 
-  warn "Delete all servers in ${HOME}/Craft?"
-  read -p "(y/n) : " -n 1 -r
-  echo
-  if [[ $REPLY =~ ^[Yy]$ ]]; then
-
-    delete_servers=true
-
-    break
-
-  elif [[ $REPLY =~ ^[Nn]$ ]]; then
-
-    warn "Leaving servers alone" 
-
-    break
-
-  else
-
-    echo "Please enter y or n"
-
-  fi
-
-done
-
-if [ "$uninstall" == true ]; then 
-  ohai "Stopping all servers"
-  servers=$(craft -ls)
-  for server in $servers
-  do
-    craft stop -n $server &>/dev/null
-  done
-  ohai "Deleting Craft CLI files"
-  execute_sudo "rm" "-r" "/usr/local/craft"
-  execute_sudo "rm" "-r" "/usr/local/bin/craft"
+if grep -q "export PATH.*$BIN_DIR" "$shell_profile"; then
+	echo "Removing PATH from $shell_profile"
+	# shellcheck disable=SC2016
+	sed -i.bak '/export PATH="\$PATH:\/opt\/craft\/bin"/d' "$shell_profile" &>/dev/null
+	rm -f "${shell_profile}.bak" &>/dev/null
+	# shellcheck disable=SC2016
+	grep -q "export PATH=\"\$PATH:$BIN_DIR\"" "$shell_profile" &>/dev/null && echo "Failed to remove PATH from $shell_profile. Please remove it manually."
 fi
 
-if [ "$delete_servers" == true ]; then
-
-  while true; do
-
-    warn "Permanently delete all Minecraft servers and worlds in ${HOME}/Craft?"
-    read -p "(y/n) : " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-
-      execute_sudo "rm" "-r" "$HOME/Craft"
-
-      for server in $servers
-      do
-        echo "Deleted: $server"
-      done
-
-      break
-
-    elif [[ $REPLY =~ ^[Nn]$ ]]; then
-
-      warn "Leaving servers alone" 
-
-      break
-
-    else
-
-      echo "Please enter y or n"
-
-    fi
-
-  done
-
-fi
-
-ohai "Done!"
+echo "Uninstall complete"
